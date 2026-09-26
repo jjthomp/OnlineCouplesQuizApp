@@ -58,6 +58,10 @@
   .reveal .answer{font-family:'Fraunces',serif; font-size:1.1rem;}
   .score-check{display:flex; gap:10px; margin-top:16px;}
   .final-score{font-family:'Fraunces',serif; font-size:3rem; margin:8px 0 4px; color:var(--gold);}
+  .pair{display:flex; gap:12px; margin-top:4px; flex-wrap:wrap;}
+  .pair-card{flex:1; min-width:180px; background:rgba(0,0,0,0.18); border:1px solid rgba(250,243,236,0.15); border-radius:12px; padding:14px 16px;}
+  .pair-card .who{font-size:0.78rem; color:var(--gold); margin-bottom:5px;}
+  .pair-card .say{font-family:'Fraunces',serif; font-size:1.05rem; line-height:1.35;}
   .codebox{width:100%; min-height:90px; font-family:monospace; font-size:0.8rem; word-break:break-all; background:rgba(0,0,0,0.25); border:1px solid rgba(250,243,236,0.25); border-radius:10px; padding:12px; color:rgba(250,243,236,0.85); margin-top:10px;}
   .hint{font-size:0.85rem; color:rgba(250,243,236,0.55); margin-top:14px; line-height:1.5;}
   .copied{color:var(--gold); font-size:0.85rem; margin-left:10px;}
@@ -95,7 +99,11 @@ let state = {
   guessScore: 0,
   guessAnswered: false,
   guessRight: null,
-  guessInput: ''
+  guessInput: '',
+  compareCurrent: 0,
+  compareRevealed: false,
+  compareMatches: 0,
+  compareJudged: null
 };
 
 const app = document.getElementById('app');
@@ -110,7 +118,9 @@ function render(){
     showCode: renderShowCode,
     guessIntro: renderGuessIntro,
     guessPlay: renderGuessPlay,
-    guessEnd: renderGuessEnd
+    guessEnd: renderGuessEnd,
+    comparePlay: renderComparePlay,
+    compareEnd: renderCompareEnd
   };
   map[state.screen]();
 }
@@ -267,20 +277,93 @@ function renderPasteAnswers(){
   };
 }
 
+function haveOwnAnswers(){
+  return state.questions.length > 0 && state.questions.every(q => (state.myAnswers[q.id]||'').trim());
+}
+
 function renderGuessIntro(){
+  const canCompare = haveOwnAnswers();
   app.innerHTML = `
     <span class="badge">${state.questions.length} question${state.questions.length===1?'':'s'} loaded</span>
-    <h1>Ready to guess ${escapeHtml(state.partnerName)}'s answers?</h1>
-    <p class="sub">One question at a time. Say your guess out loud (or type it), then reveal.</p>
+    <h1>Two ways to play with ${escapeHtml(state.partnerName)}'s answers.</h1>
     <label for="myGuesserName">Your name</label>
     <input type="text" id="myGuesserName" placeholder="Your name" value="${escapeHtml(state.myName)}">
-    <div class="row"><button class="btn-primary" id="startBtn">Start guessing</button></div>
+    <div class="choices" style="margin-top:20px;">
+      <button class="optbtn" id="modeGuess"><span class="t">Guess mode</span><span class="d">See the question, guess what they said, then reveal and self-score.</span></button>
+      <button class="optbtn" id="modeCompare"><span class="t">Compare mode</span><span class="d">${canCompare ? "You both already answered truthfully — see them side by side, no guessing." : "Requires you to have answered these same questions yourself first."}</span></button>
+    </div>
   `;
   document.getElementById('myGuesserName').oninput = e => state.myName = e.target.value;
-  document.getElementById('startBtn').onclick = () => {
+  document.getElementById('modeGuess').onclick = () => {
     state.guessCurrent=0; state.guessScore=0; state.guessAnswered=false; state.guessRight=null;
     state.screen='guessPlay'; render();
   };
+  document.getElementById('modeCompare').onclick = () => {
+    if(!canCompare){
+      state.answerDraft = {...state.myAnswers};
+      state.screen='answerSelf'; render();
+      return;
+    }
+    state.compareCurrent=0; state.compareMatches=0; state.compareRevealed=false; state.compareJudged=null;
+    state.screen='comparePlay'; render();
+  };
+}
+
+function renderComparePlay(){
+  const q = state.questions[state.compareCurrent];
+  const mine = state.myAnswers[q.id] || '(no answer)';
+  const theirs = state.partnerAnswers[q.id] || '(no answer)';
+  app.innerHTML = `
+    <div class="progress">Question ${state.compareCurrent+1} of ${state.questions.length} · comparing with ${escapeHtml(state.partnerName)}</div>
+    <div class="qtext">${escapeHtml(q.text)}</div>
+    ${!state.compareRevealed ? `
+      <div class="row"><button class="btn-gold" id="revealBtn">Reveal both answers</button></div>
+    ` : `
+      <div class="pair">
+        <div class="pair-card"><div class="who">${escapeHtml(state.myName||'You')}</div><div class="say">${escapeHtml(mine)}</div></div>
+        <div class="pair-card"><div class="who">${escapeHtml(state.partnerName)}</div><div class="say">${escapeHtml(theirs)}</div></div>
+      </div>
+      ${state.compareJudged === null ? `
+        <p class="sub" style="margin:14px 0 0;">Same energy?</p>
+        <div class="score-check">
+          <button class="btn-primary" id="markSame">We matched ✓</button>
+          <button class="btn-ghost" id="markDiff">Different ✕</button>
+        </div>
+      ` : `
+        <div class="row"><button class="btn-primary" id="nextQ">${state.compareCurrent+1 < state.questions.length ? 'Next question' : 'See the recap'}</button></div>
+      `}
+    `}
+  `;
+  if(!state.compareRevealed){
+    document.getElementById('revealBtn').onclick = () => { state.compareRevealed=true; state.compareJudged=null; render(); };
+  } else if(state.compareJudged === null){
+    document.getElementById('markSame').onclick = () => { state.compareJudged=true; state.compareMatches++; render(); };
+    document.getElementById('markDiff').onclick = () => { state.compareJudged=false; render(); };
+  } else {
+    document.getElementById('nextQ').onclick = () => {
+      if(state.compareCurrent+1 < state.questions.length){
+        state.compareCurrent++; state.compareRevealed=false; state.compareJudged=null; render();
+      } else { state.screen='compareEnd'; render(); }
+    };
+  }
+}
+
+function renderCompareEnd(){
+  const total = state.questions.length;
+  app.innerHTML = `
+    <span class="badge">Recap</span>
+    <h1>You and ${escapeHtml(state.partnerName)} matched on ${state.compareMatches} of ${total}.</h1>
+    <p class="sub">Compare mode isn't about winning — just about noticing where you overlap and where you're pleasantly different.</p>
+    <div class="row">
+      <button class="btn-primary" id="again">Go through them again</button>
+      <button class="btn-ghost" id="homeBtn">Back to start</button>
+    </div>
+  `;
+  document.getElementById('again').onclick = () => {
+    state.compareCurrent=0; state.compareMatches=0; state.compareRevealed=false; state.compareJudged=null;
+    state.screen='comparePlay'; render();
+  };
+  document.getElementById('homeBtn').onclick = () => { state.screen='home'; render(); };
 }
 
 function renderGuessPlay(){
